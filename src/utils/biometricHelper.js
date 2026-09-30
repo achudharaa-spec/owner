@@ -15,7 +15,7 @@ export async function verifyBiometricFingerprint() {
           rp: { name: "Govindasamy & Co Admin Security" },
           user: {
             id: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
-            name: "govindasamy.textitle@gmail.com",
+            name: import.meta.env?.VITE_ADMIN_EMAIL || "admin@example.com",
             displayName: "Admin Owner (Fingerprint Protected)"
           },
           challenge: challenge,

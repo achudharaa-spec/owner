@@ -3,6 +3,8 @@ import { db, storage, collection, onSnapshot, doc, deleteDoc, updateDoc, ref, up
 import { toast } from '../utils/toast';
 import LottieAnimation from './LottieAnimation';
 
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:10000';
+
 export default function ProductGrid({ products }) {
   const [filterCategory, setFilterCategory] = useState('ALL');
   const [firestoreCategories, setFirestoreCategories] = useState([]);
@@ -21,10 +23,11 @@ export default function ProductGrid({ products }) {
     return () => unsubscribe();
   }, []);
   const [sortOption, setSortOption] = useState('default');
+  const [activeCardImages, setActiveCardImages] = useState({});
   const [editingProduct, setEditingProduct] = useState(null);
   const [editForm, setEditForm] = useState({
     title: '',
-    category: 'Panipat Mat',
+    category: 'Handloom Mats',
     baseRate: '',
     unit: 'per Bundle',
     bundlePieces: 10,
@@ -34,20 +37,23 @@ export default function ProductGrid({ products }) {
     seasonNotice: 'Price may differ based on the season item or the stock quantity',
     minOrderNotice: '',
     description: '',
-    imageUrl: '',
-    imageFile: null,
-    imagePreview: null,
+    existingImages: [],
+    newImageFiles: [],
+    newImagePreviews: [],
     isDisabled: false
   });
   const [updating, setUpdating] = useState(false);
 
-  // Open Edit Modal with Image & Disabled State
+  // Open Edit Modal with Multi-Image & Disabled State
   const handleStartEdit = (prod) => {
     const isCurrentlyInStock = prod.inStock !== false && prod.stockStatus !== 'OUT_OF_STOCK';
+    const prodImages = Array.isArray(prod.images) && prod.images.length > 0 
+      ? prod.images 
+      : (prod.imageUrl ? [prod.imageUrl] : ['/assets/logo.jpg']);
     setEditingProduct(prod);
     setEditForm({
       title: prod.title || '',
-      category: prod.category || 'Panipat Mat',
+      category: prod.category || 'Handloom Mats',
       baseRate: prod.baseRate || '',
       unit: prod.unit || 'per Bundle',
       bundlePieces: prod.bundlePieces || 10,
@@ -57,60 +63,111 @@ export default function ProductGrid({ products }) {
       seasonNotice: prod.seasonNotice || 'Price may differ based on the season item or the stock quantity',
       minOrderNotice: prod.minOrderNotice || '',
       description: prod.description || '',
-      imageUrl: prod.imageUrl || '/assets/logo.jpg',
-      imageFile: null,
-      imagePreview: null,
+      existingImages: prodImages,
+      newImageFiles: [],
+      newImagePreviews: [],
       isDisabled: !!prod.isDisabled
     });
   };
 
-  // Handle New Image Selection inside Edit Modal
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        toast.warning('Please select a valid image file (JPG, PNG, WEBP).', 'Invalid Image');
+  // Helper for image compression
+  const compressImage = (file, maxWidth = 800, quality = 0.75) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          } catch (cErr) {
+            resolve(e.target.result);
+          }
+        };
+        img.onerror = () => resolve(e.target.result);
+        img.src = e.target.result;
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handle New Image Selection inside Edit Modal (2 to 4 total photos)
+  const handleEditImagesChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      const totalAllowed = 4 - editForm.existingImages.length;
+      if (totalAllowed <= 0) {
+        toast.warning('Maximum 4 photos allowed per item. Please remove an existing photo first.', 'Limit Reached');
         return;
       }
-      if (file.size > 5 * 1024 * 1024) {
-        toast.warning('Image file size must be less than 5MB.', 'File Too Large');
-        return;
-      }
+      const validFiles = files.slice(0, totalAllowed);
+      const combinedFiles = [...editForm.newImageFiles, ...validFiles].slice(0, totalAllowed);
+      const previews = combinedFiles.map(f => URL.createObjectURL(f));
+
       setEditForm(prev => ({
         ...prev,
-        imageFile: file,
-        imagePreview: URL.createObjectURL(file)
+        newImageFiles: combinedFiles,
+        newImagePreviews: previews
       }));
     }
+  };
+
+  const handleRemoveExistingImage = (idxToRemove) => {
+    const updated = editForm.existingImages.filter((_, i) => i !== idxToRemove);
+    setEditForm(prev => ({ ...prev, existingImages: updated }));
+  };
+
+  const handleRemoveNewImage = (idxToRemove) => {
+    const updatedFiles = editForm.newImageFiles.filter((_, i) => i !== idxToRemove);
+    const updatedPreviews = editForm.newImagePreviews.filter((_, i) => i !== idxToRemove);
+    setEditForm(prev => ({ ...prev, newImageFiles: updatedFiles, newImagePreviews: updatedPreviews }));
   };
 
   // Quick Toggle Disabled State (Move to last when disabled, restore actual position when enabled)
   const handleToggleDisabled = async (prod) => {
     const newDisabled = !prod.isDisabled;
-    const actionText = newDisabled ? 'disable' : 'enable';
-    
-    try {
-      const updatePayload = { isDisabled: newDisabled };
-      await updateDoc(doc(db, 'products', prod.id), updatePayload);
+    const updatePayload = { isDisabled: newDisabled };
 
-      // Update local storage & broadcast channel
-      const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
-      const updatedList = cached.map(p => p.id === prod.id ? { ...p, ...updatePayload } : p);
-      localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
+    // 1. Sync immediately to Central Server API (bridges port 3000 Admin and port 3001 User)
+    fetch(`${SERVER_URL}/api/products/${prod.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatePayload)
+    }).catch((e) => console.info('Server toggle disable sync notice:', e.message));
 
-      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+    // 2. Update local storage & broadcast channel immediately so UI never lags
+    const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
+    const updatedList = cached.map(p => p.id === prod.id ? { ...p, ...updatePayload } : p);
+    localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
+
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      try {
         const channel = new BroadcastChannel('gsco_realtime_channel');
         channel.postMessage({
           type: 'PRODUCT_UPDATED',
           product: { id: prod.id, ...updatePayload }
         });
         channel.close();
-      }
+      } catch (_) {}
+    }
 
-      toast.success(`Product "${prod.title}" ${newDisabled ? 'disabled and moved to last' : 'enabled and restored to actual position'}!`, 'Catalog Updated');
+    toast.success(`Product "${prod.title}" ${newDisabled ? 'disabled' : 'enabled'}!`, 'Catalog Updated');
+
+    try {
+      await updateDoc(doc(db, 'products', prod.id), updatePayload);
     } catch (err) {
-      console.error('Toggle disable error:', err);
-      toast.error(`Failed to ${actionText} product: ` + err.message, 'Operation Failed');
+      console.warn('Firestore toggle disable sync notice:', err.message);
     }
   };
 
@@ -119,70 +176,79 @@ export default function ProductGrid({ products }) {
     const isCurrentlyInStock = prod.inStock !== false && prod.stockStatus !== 'OUT_OF_STOCK';
     const newInStock = !isCurrentlyInStock;
     const newStatus = newInStock ? 'IN_STOCK' : 'OUT_OF_STOCK';
+    const updatePayload = {
+      inStock: newInStock,
+      stockStatus: newStatus,
+      stockQty: newInStock ? 100 : 0
+    };
+
+    // 1. Sync immediately to Central Server API
+    fetch(`${SERVER_URL}/api/products/${prod.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatePayload)
+    }).catch((e) => console.info('Server toggle stock sync notice:', e.message));
+
+    // 2. Update local storage & broadcast channel
+    const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
+    const updatedList = cached.map(p => p.id === prod.id ? { ...p, ...updatePayload } : p);
+    localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
+
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      try {
+        const channel = new BroadcastChannel('gsco_realtime_channel');
+        channel.postMessage({
+          type: 'PRODUCT_UPDATED',
+          product: { id: prod.id, ...updatePayload }
+        });
+        channel.close();
+      } catch (_) {}
+    }
+
+    toast.success(`Product "${prod.title}" marked as ${newInStock ? 'In Stock' : 'Out of Stock'}!`, 'Stock Updated');
 
     try {
-      const updatePayload = {
-        inStock: newInStock,
-        stockStatus: newStatus,
-        stockQty: newInStock ? 100 : 0
-      };
-
       await updateDoc(doc(db, 'products', prod.id), updatePayload);
-      toast.success(`Product "${prod.title}" marked as ${newInStock ? 'In Stock' : 'Out of Stock'}!`, 'Stock Updated');
     } catch (err) {
-      console.error('Toggle stock error:', err);
-      toast.error('Failed to update stock status: ' + err.message, 'Operation Failed');
+      console.warn('Firestore stock sync notice:', err.message);
     }
   };
 
-  // Save Product Changes (Update with Image & Disabled State)
+  // Save Product Changes (Update with 2-4 Images & Disabled State)
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editingProduct) return;
 
+    const totalImagesCount = editForm.existingImages.length + editForm.newImageFiles.length;
+    if (totalImagesCount < 2) {
+      toast.warning('Please provide at least 2 photos (up to 4) for this product.', '2 to 4 Photos Required');
+      return;
+    }
+
     setUpdating(true);
-    let finalImageUrl = editForm.imageUrl;
+    const finalUploadedUrls = [...editForm.existingImages];
 
     try {
-      if (editForm.imageFile) {
-        try {
-          const imageRef = ref(storage, `product-images/${Date.now()}_${editForm.imageFile.name.replace(/[^a-zA-Z0-9.]/g, '_')}`);
-          
-          const storageTimeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Cloud Storage not provisioned or timeout')), 1500)
-          );
+      for (let i = 0; i < editForm.newImageFiles.length; i++) {
+        const file = editForm.newImageFiles[i];
+        let fileUrl = null;
 
-          await Promise.race([uploadBytes(imageRef, editForm.imageFile), storageTimeout]);
-          finalImageUrl = await getDownloadURL(imageRef);
+        try {
+          const imageRef = ref(storage, `product-images/${Date.now()}_${i}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`);
+          const storageTimeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Cloud Storage timeout')), 1800)
+          );
+          await Promise.race([uploadBytes(imageRef, file), storageTimeout]);
+          fileUrl = await getDownloadURL(imageRef);
         } catch (imgErr) {
-          console.warn('Image upload error during edit, using compressed Data URL fallback:', imgErr);
+          console.warn('Storage upload error, using compressed base64 fallback:', imgErr);
           try {
-            finalImageUrl = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = (e) => {
-                const img = new Image();
-                img.onload = () => {
-                  try {
-                    const canvas = document.createElement('canvas');
-                    let w = img.width, h = img.height;
-                    if (w > 600) { h = Math.round((h * 600) / w); w = 600; }
-                    canvas.width = w; canvas.height = h;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, w, h);
-                    resolve(canvas.toDataURL('image/jpeg', 0.70));
-                  } catch (cErr) { resolve(e.target.result); }
-                };
-                img.onerror = () => resolve(e.target.result);
-                img.src = e.target.result;
-              };
-              reader.onerror = (rErr) => reject(rErr);
-              reader.readAsDataURL(editForm.imageFile);
-            });
-            toast.info('Updated image attached & saved.', 'Photo Saved');
+            fileUrl = await compressImage(file, 800, 0.75);
           } catch (_) {
-            finalImageUrl = editForm.imageUrl || '/assets/logo.jpg';
+            fileUrl = '/assets/logo.png';
           }
         }
+        if (fileUrl) finalUploadedUrls.push(fileUrl);
       }
 
       const isEditInStock = editForm.stockStatus === 'IN_STOCK';
@@ -192,7 +258,7 @@ export default function ProductGrid({ products }) {
       const updatePayload = {
         title: editForm.title.trim(),
         category: editForm.category.trim(),
-        baseRate: parseFloat(editForm.baseRate),
+        baseRate: parseFloat(editForm.baseRate) || 0,
         unit: editForm.unit,
         bundlePieces: finalEditPieces,
         bundlesPerPack: finalEditBpp,
@@ -202,30 +268,46 @@ export default function ProductGrid({ products }) {
         seasonNotice: editForm.seasonNotice.trim(),
         minOrderNotice: editForm.minOrderNotice.trim(),
         description: editForm.description.trim(),
-        imageUrl: finalImageUrl,
+        imageUrl: finalUploadedUrls[0] || '/assets/logo.png',
+        images: finalUploadedUrls.slice(0, 4),
         isDisabled: editForm.isDisabled
       };
 
-      await updateDoc(doc(db, 'products', editingProduct.id), updatePayload);
+      // 1. Authoritative sync to Central Server API (bridges port 3000 Admin and port 3001 User)
+      fetch(`${SERVER_URL}/api/products/${editingProduct.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload)
+      }).catch((e) => console.info('Server save edit sync notice:', e.message));
 
+      // 2. Optimistically update local storage & broadcast immediately
       const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
       const updatedList = cached.map(p => p.id === editingProduct.id ? { ...p, ...updatePayload } : p);
       localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
 
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        const channel = new BroadcastChannel('gsco_realtime_channel');
-        channel.postMessage({
-          type: 'PRODUCT_UPDATED',
-          product: { id: editingProduct.id, ...updatePayload }
-        });
-        channel.close();
+        try {
+          const channel = new BroadcastChannel('gsco_realtime_channel');
+          channel.postMessage({
+            type: 'PRODUCT_UPDATED',
+            product: { id: editingProduct.id, ...updatePayload }
+          });
+          channel.close();
+        } catch (_) {}
       }
 
       toast.success(`Product "${updatePayload.title}" updated successfully!`, 'Product Updated');
       setEditingProduct(null);
+
+      // Attempt Firestore write
+      try {
+        await updateDoc(doc(db, 'products', editingProduct.id), updatePayload);
+      } catch (fsErr) {
+        console.warn('Firestore update sync notice:', fsErr.message);
+      }
     } catch (err) {
       console.error('Update error:', err);
-      toast.error('Failed to update product: ' + err.message, 'Update Failed');
+      toast.error('Failed to process image updates: ' + err.message, 'Update Failed');
     } finally {
       setUpdating(false);
     }
@@ -240,23 +322,30 @@ export default function ProductGrid({ products }) {
       cancelText: 'Cancel',
       type: 'danger',
       onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, 'products', id));
+        // 1. Authoritative sync to Central Server API (bridges port 3000 Admin and port 3001 User)
+        fetch(`${SERVER_URL}/api/products/${id}`, {
+          method: 'DELETE'
+        }).catch((e) => console.info('Server delete sync notice:', e.message));
 
-          const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
-          const updatedList = cached.filter(p => p.id !== id);
-          localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
+        // 2. Optimistically delete from local storage & broadcast
+        const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
+        const updatedList = cached.filter(p => p.id !== id);
+        localStorage.setItem('gsco_catalog_products', JSON.stringify(updatedList));
 
-          if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          try {
             const channel = new BroadcastChannel('gsco_realtime_channel');
             channel.postMessage({ type: 'PRODUCT_DELETED', productId: id });
             channel.close();
-          }
+          } catch (_) {}
+        }
 
-          toast.success(`Product "${title}" deleted successfully!`, 'Product Deleted');
+        toast.success(`Product "${title}" deleted successfully!`, 'Product Deleted');
+
+        try {
+          await deleteDoc(doc(db, 'products', id));
         } catch (err) {
-          console.error('Delete error:', err);
-          toast.error('Failed to delete product: ' + err.message, 'Delete Failed');
+          console.warn('Firestore delete sync notice:', err.message);
         }
       }
     });
@@ -264,10 +353,10 @@ export default function ProductGrid({ products }) {
 
   const baseCategories = [
     { id: 'ALL', label: 'All Products', icon: 'fa-table-cells-large' },
-    { id: 'Panipat Mat', label: 'Panipat Mat', icon: 'fa-layer-group' },
-    { id: 'Export Mat', label: 'Export Mat', icon: 'fa-globe' },
-    { id: 'Local Mat', label: 'Local Mat', icon: 'fa-location-dot' },
-    { id: 'Long Mat', label: 'Long Mat', icon: 'fa-pen-ruler' }
+    { id: 'Handloom Mats', label: 'Handloom Mats', icon: 'fa-rug' },
+    { id: 'Rubber Mats', label: 'Rubber Mats', icon: 'fa-cubes' },
+    { id: 'Fancy Mats', label: 'Fancy Mats', icon: 'fa-wand-magic-sparkles' },
+    { id: 'Bed Spreads', label: 'Bed Spreads', icon: 'fa-bed' }
   ];
 
   const categories = React.useMemo(() => {
@@ -359,6 +448,11 @@ export default function ProductGrid({ products }) {
             const isBulkUnit = (p.unit === 'per Bundle' || p.unit === 'per Dozen') && p.bundlePieces > 0;
             const perPieceRate = isBulkUnit ? Math.round(p.baseRate / p.bundlePieces) : 0;
             const isDisabled = !!p.isDisabled;
+            const productImages = (Array.isArray(p.images) && p.images.length > 0)
+              ? p.images
+              : [p.imageUrl || '/assets/logo.jpg'];
+            const activeIdx = activeCardImages[p.id] || 0;
+            const currentImg = productImages[activeIdx] || productImages[0];
 
             return (
               <div
@@ -368,6 +462,12 @@ export default function ProductGrid({ products }) {
                 {/* Card Top Bar */}
                 <div className="card-top-bar">
                   <span className="card-category-badge">{p.category}</span>
+                  {productImages.length > 1 && (
+                    <span className="card-bundle-pill" style={{ background: '#fdf4ff', color: '#9e2267', borderColor: '#f5d0fe' }}>
+                      <i className="fa-solid fa-camera" style={{ marginRight: '0.25rem' }}></i>
+                      {productImages.length} Photos
+                    </span>
+                  )}
                   {isBulkUnit && (
                     <span className="card-bundle-pill">
                       {p.bundlePieces} Pcs/{p.unit.replace('per ', '')}
@@ -398,13 +498,50 @@ export default function ProductGrid({ products }) {
 
                 {/* Card Main Split */}
                 <div className="card-main-split">
-                  <div className="card-image-box">
+                  <div className="card-image-box" style={{ position: 'relative' }}>
                     <img
-                      src={p.imageUrl || '/assets/logo.jpg'}
+                      src={currentImg}
                       alt={p.title}
                       className="card-product-img"
                       onError={(e) => { e.target.src = '/assets/logo.jpg'; }}
                     />
+                    {productImages.length > 1 && (
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        gap: '5px',
+                        position: 'absolute',
+                        bottom: '8px',
+                        left: 0,
+                        right: 0,
+                        background: 'rgba(15, 23, 42, 0.65)',
+                        backdropFilter: 'blur(4px)',
+                        padding: '4px 8px',
+                        borderRadius: '12px',
+                        width: 'fit-content',
+                        margin: '0 auto',
+                        zIndex: 2
+                      }}>
+                        {productImages.map((_, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setActiveCardImages(prev => ({ ...prev, [p.id]: idx }))}
+                            style={{
+                              width: activeIdx === idx ? '16px' : '7px',
+                              height: '7px',
+                              borderRadius: '4px',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              background: activeIdx === idx ? '#c89a4b' : 'rgba(255,255,255,0.7)',
+                              transition: 'all 0.2s ease'
+                            }}
+                            title={`Photo ${idx + 1}`}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="card-info-col">
@@ -567,51 +704,179 @@ export default function ProductGrid({ products }) {
             </div>
 
             <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* Product Photo Upload Section */}
+              {/* Product Photos Section (2 to 4 Photos) */}
               <div style={{
                 background: '#f8fafc',
                 padding: '1rem',
                 borderRadius: '12px',
                 border: '1.5px solid #e2e8f0',
                 display: 'flex',
-                alignItems: 'center',
-                gap: '1rem'
+                flexDirection: 'column',
+                gap: '0.75rem'
               }}>
-                <img
-                  src={editForm.imagePreview || editForm.imageUrl || '/assets/logo.jpg'}
-                  alt="Product preview"
-                  style={{
-                    width: '80px',
-                    height: '80px',
-                    objectFit: 'contain',
-                    borderRadius: '10px',
-                    border: '1.5px solid #cbd5e1',
-                    background: '#ffffff',
-                    boxShadow: '0 2px 6px rgba(0,0,0,0.06)'
-                  }}
-                  onError={(e) => { e.target.src = '/assets/logo.jpg'; }}
-                />
-                <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={{
-                    fontSize: '0.82rem',
+                    fontSize: '0.84rem',
                     fontWeight: 700,
                     color: 'var(--brand-navy)',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '0.35rem',
-                    marginBottom: '0.4rem'
+                    gap: '0.4rem',
+                    margin: 0
                   }}>
-                    <i className="fa-solid fa-image" style={{ color: 'var(--brand-gold)' }}></i>
-                    Product Photo (Edit / Replace)
+                    <i className="fa-solid fa-images" style={{ color: 'var(--brand-magenta)' }}></i>
+                    Product Photos ({editForm.existingImages.length + editForm.newImagePreviews.length} / 4)
                   </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    className="form-control"
-                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.6rem' }}
-                  />
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: (editForm.existingImages.length + editForm.newImagePreviews.length) < 2 ? '#b91c1c' : '#15803d'
+                  }}>
+                    {(editForm.existingImages.length + editForm.newImagePreviews.length) < 2 ? '⚠️ Min 2 photos required' : '✓ 2 to 4 Photos'}
+                  </span>
                 </div>
+
+                {/* Thumbnails grid */}
+                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  {editForm.existingImages.map((imgUrl, idx) => (
+                    <div key={`existing-${idx}`} style={{ position: 'relative', width: '74px', height: '74px' }}>
+                      <img
+                        src={imgUrl}
+                        alt={`Photo ${idx + 1}`}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          borderRadius: '8px',
+                          border: idx === 0 ? '2px solid #c89a4b' : '1px solid #cbd5e1',
+                          background: '#fff'
+                        }}
+                        onError={(e) => { e.target.src = '/assets/logo.jpg'; }}
+                      />
+                      <span style={{
+                        position: 'absolute',
+                        top: '2px',
+                        left: '2px',
+                        background: idx === 0 ? '#c89a4b' : 'rgba(15,23,42,0.7)',
+                        color: '#fff',
+                        fontSize: '0.62rem',
+                        fontWeight: 700,
+                        padding: '1px 4px',
+                        borderRadius: '4px'
+                      }}>
+                        {idx === 0 ? 'Cover' : `#${idx + 1}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveExistingImage(idx)}
+                        style={{
+                          position: 'absolute',
+                          top: '-6px',
+                          right: '-6px',
+                          background: '#ef4444',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          fontSize: '0.65rem'
+                        }}
+                        title="Remove photo"
+                      >
+                        <i className="fa-solid fa-xmark"></i>
+                      </button>
+                    </div>
+                  ))}
+
+                  {editForm.newImagePreviews.map((previewUrl, idx) => (
+                    <div key={`new-${idx}`} style={{ position: 'relative', width: '74px', height: '74px' }}>
+                      <img
+                        src={previewUrl}
+                        alt={`New ${idx + 1}`}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          borderRadius: '8px',
+                          border: '1.5px dashed #22c55e',
+                          background: '#fff'
+                        }}
+                      />
+                      <span style={{
+                        position: 'absolute',
+                        top: '2px',
+                        left: '2px',
+                        background: '#16a34a',
+                        color: '#fff',
+                        fontSize: '0.62rem',
+                        fontWeight: 700,
+                        padding: '1px 4px',
+                        borderRadius: '4px'
+                      }}>
+                        New
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveNewImage(idx)}
+                        style={{
+                          position: 'absolute',
+                          top: '-6px',
+                          right: '-6px',
+                          background: '#ef4444',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          fontSize: '0.65rem'
+                        }}
+                        title="Remove new photo"
+                      >
+                        <i className="fa-solid fa-xmark"></i>
+                      </button>
+                    </div>
+                  ))}
+
+                  {(editForm.existingImages.length + editForm.newImagePreviews.length) < 4 && (
+                    <label style={{
+                      width: '74px',
+                      height: '74px',
+                      border: '2px dashed #94a3b8',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      background: '#ffffff',
+                      color: '#64748b',
+                      fontSize: '0.68rem',
+                      textAlign: 'center',
+                      gap: '2px'
+                    }}>
+                      <i className="fa-solid fa-cloud-arrow-up" style={{ fontSize: '1rem', color: '#9e2267' }}></i>
+                      <span>Add</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleEditImagesChange}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  )}
+                </div>
+                <small style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                  Provide 2 to 4 photos per item (Cover photo, pattern details, packaging angle).
+                </small>
               </div>
 
               {/* Product Status: Active / Disabled Banner */}
@@ -683,6 +948,10 @@ export default function ProductGrid({ products }) {
                     value={editForm.category}
                     onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                   >
+                    <option value="Handloom Mats">Handloom Mats</option>
+                    <option value="Rubber Mats">Rubber Mats</option>
+                    <option value="Fancy Mats">Fancy Mats</option>
+                    <option value="Bed Spreads">Bed Spreads</option>
                     <option value="Panipat Mat">Panipat Mat</option>
                     <option value="Export Mat">Export Mat</option>
                     <option value="Local Mat">Local Mat</option>

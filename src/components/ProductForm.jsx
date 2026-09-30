@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { db, storage, collection, addDoc, onSnapshot, serverTimestamp, ref, uploadBytes, getDownloadURL, functions, httpsCallable } from '../firebase';
+import { db, storage, collection, addDoc, onSnapshot, serverTimestamp, ref, uploadBytes, getDownloadURL } from '../firebase';
 import { toast } from '../utils/toast';
+
+const DEFAULT_CATEGORIES = ['Handloom Mats', 'Rubber Mats', 'Fancy Mats', 'Bed Spreads'];
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:10000';
 
 export default function ProductForm() {
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('Panipat Mat');
+  const [category, setCategory] = useState('Handloom Mats');
   const [newCatInput, setNewCatInput] = useState('');
   const [showNewCat, setShowNewCat] = useState(false);
-  const [customCategories, setCustomCategories] = useState([]);
+  const [customCategories, setCustomCategories] = useState(DEFAULT_CATEGORIES);
 
   // Subscribe to real-time categories from Firestore
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'categories'), (snapshot) => {
       const cats = snapshot.docs.map((d) => d.data().name).filter(Boolean);
       if (cats.length > 0) {
-        setCustomCategories((prev) => Array.from(new Set([...prev, ...cats])));
+        setCustomCategories((prev) => Array.from(new Set([...DEFAULT_CATEGORIES, ...prev, ...cats])));
       }
     }, (err) => {
       console.warn('Firestore categories sync notice:', err.message);
@@ -32,8 +35,9 @@ export default function ProductForm() {
   const [seasonNotice, setSeasonNotice] = useState('Price may differ based on the season item or the stock quantity');
   const [description, setDescription] = useState('');
   
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  // 2 to 4 Images for each item
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const [uploading, setUploading] = useState(false);
 
   const handleUnitChange = (unit) => {
@@ -68,7 +72,7 @@ export default function ProductForm() {
   const handleAddCustomCategory = async () => {
     if (newCatInput.trim()) {
       const catName = newCatInput.trim();
-      setCustomCategories([...customCategories, catName]);
+      setCustomCategories((prev) => Array.from(new Set([...prev, catName])));
       setCategory(catName);
       setShowNewCat(false);
       setNewCatInput('');
@@ -116,16 +120,29 @@ export default function ProductForm() {
     });
   };
 
-  const handleImageChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > 10 * 1024 * 1024) {
-        toast.warning('Image size exceeds 10MB limit. Please select a smaller file.', 'File Too Large');
-        return;
+  const handleImagesSelected = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files);
+      const combined = [...imageFiles, ...selected].slice(0, 4);
+      setImageFiles(combined);
+
+      // Generate previews
+      const newPreviews = combined.map((file) => URL.createObjectURL(file));
+      setImagePreviews(newPreviews);
+
+      if (combined.length < 2) {
+        toast.info('Please select at least 2 images (up to 4) for this item.', '2-4 Images Required');
+      } else {
+        toast.success(`${combined.length} photos ready for upload!`, 'Photos Attached');
       }
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
     }
+  };
+
+  const handleRemoveImage = (indexToRemove) => {
+    const updatedFiles = imageFiles.filter((_, idx) => idx !== indexToRemove);
+    const updatedPreviews = imagePreviews.filter((_, idx) => idx !== indexToRemove);
+    setImageFiles(updatedFiles);
+    setImagePreviews(updatedPreviews);
   };
 
   const handleSubmit = async (e) => {
@@ -135,26 +152,35 @@ export default function ProductForm() {
       return;
     }
 
+    if (imageFiles.length < 2) {
+      toast.warning('Please upload at least 2 photos (up to 4) for each mat item.', '2 to 4 Images Required');
+      return;
+    }
+
     setUploading(true);
-    let imageUrl = '/assets/logo.jpg';
+    const uploadedUrls = [];
 
-    if (imageFile) {
+    // Process all 2 to 4 images
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      const filename = `product-images/${Date.now()}_img${i + 1}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+      const storageRef = ref(storage, filename);
+
       try {
-        // Fast 1.5s check: uses Cloud Storage if Blaze enabled, or instant compressed image on Spark Free Plan
         const storageTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Cloud Storage not provisioned or timeout')), 1500)
+          setTimeout(() => reject(new Error('Cloud Storage timeout')), 1500)
         );
-
-        await Promise.race([uploadBytes(storageRef, imageFile), storageTimeout]);
-        imageUrl = await getDownloadURL(storageRef);
+        await Promise.race([uploadBytes(storageRef, file), storageTimeout]);
+        const url = await getDownloadURL(storageRef);
+        uploadedUrls.push(url);
       } catch (err) {
-        console.warn('Cloud Storage upload skipped or timed out, generating optimized visual Data URL fallback:', err.message);
+        console.warn(`Storage upload skipped or timed out for photo ${i + 1}, creating visual data URL:`, err.message);
         try {
-          imageUrl = await compressImage(imageFile, 600, 0.70);
-          toast.info('Image attached & saved for this item.', 'Photo Saved');
+          const dataUrl = await compressImage(file, 700, 0.72);
+          uploadedUrls.push(dataUrl);
         } catch (compErr) {
           console.error('Image compression failed:', compErr);
-          imageUrl = '/assets/logo.jpg';
+          uploadedUrls.push('/assets/logo.png');
         }
       }
     }
@@ -177,65 +203,75 @@ export default function ProductForm() {
       stockQty: stockStatus === 'IN_STOCK' ? 100 : 0,
       seasonNotice,
       description: description.trim(),
-      imageUrl
+      imageUrl: uploadedUrls[0] || '/assets/logo.png',
+      images: uploadedUrls
     };
 
-    const firestorePayload = {
+    const assignedId = 'prod_' + Date.now();
+    const finalProduct = {
+      id: assignedId,
       ...productData,
-      createdAt: serverTimestamp()
+      createdAt: nowIso
     };
 
+    // 1. Authoritative sync to Central Server API (bridges port 3000 Admin and port 3001 User)
     try {
-      // Single authoritative write to Firestore
-      const docRef = await addDoc(collection(db, 'products'), firestorePayload);
-
-      toast.success(`Product "${name}" uploaded successfully! Catalog updated.`, 'Product Uploaded');
-      setName('');
-      setBaseRate('');
-      setBundlesPerPack(8);
-      setBundlePieces(10);
-      setUnitType('per Bundle');
-      setDescription('');
-      setImageFile(null);
-      setImagePreview(null);
-    } catch (err) {
-      console.warn('Persisting product locally & broadcasting across tabs in real-time:', err.message);
-      const localProduct = {
-        id: 'prod_' + Date.now(),
-        ...productData,
-        createdAt: nowIso
-      };
-      try {
-        const sanitizedForStorage = {
-          ...localProduct,
-          imageUrl: (localProduct.imageUrl && localProduct.imageUrl.startsWith('data:')) ? '/assets/logo.jpg' : localProduct.imageUrl
-        };
-        const existing = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
-        localStorage.setItem('gsco_catalog_products', JSON.stringify([sanitizedForStorage, ...existing.slice(0, 30)]));
-      } catch (quotaErr) {
-        console.warn('LocalStorage quota notice:', quotaErr);
-      }
-      if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        try {
-          const channel = new BroadcastChannel('gsco_realtime_channel');
-          channel.postMessage({ type: 'PRODUCT_ADDED', product: localProduct });
-          channel.close();
-        } catch (bcErr) {
-          console.warn('BroadcastChannel error:', bcErr);
-        }
-      }
-      toast.success(`Product "${name}" uploaded successfully! Added to catalog.`, 'Product Uploaded');
-      setName('');
-      setBaseRate('');
-      setBundlesPerPack(8);
-      setBundlePieces(10);
-      setUnitType('per Bundle');
-      setDescription('');
-      setImageFile(null);
-      setImagePreview(null);
-    } finally {
-      setUploading(false);
+      await fetch(`${SERVER_URL}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(finalProduct)
+      });
+    } catch (apiErr) {
+      console.warn('Central server product post notice:', apiErr.message);
     }
+
+    // 2. Optimistically update local storage & broadcast channel
+    try {
+      const existing = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
+      const updated = [finalProduct, ...existing.filter((p) => p.id !== assignedId)];
+      localStorage.setItem('gsco_catalog_products', JSON.stringify(updated.slice(0, 50)));
+    } catch (quotaErr) {
+      console.warn('LocalStorage quota notice:', quotaErr);
+    }
+
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      try {
+        const channel = new BroadcastChannel('gsco_realtime_channel');
+        channel.postMessage({ type: 'PRODUCT_ADDED', product: finalProduct });
+        channel.close();
+      } catch (bcErr) {
+        console.warn('BroadcastChannel error:', bcErr);
+      }
+    }
+
+    // 3. Attempt Firestore write as cloud backup
+    try {
+      const docRef = await addDoc(collection(db, 'products'), {
+        ...productData,
+        createdAt: serverTimestamp()
+      });
+      if (docRef && docRef.id && docRef.id !== assignedId) {
+        // If Firestore assigned a custom id, link it
+        fetch(`${SERVER_URL}/api/products/${assignedId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ firestoreId: docRef.id })
+        }).catch(() => {});
+      }
+    } catch (fsErr) {
+      console.warn('Firestore cloud backup notice (using server sync):', fsErr.message);
+    }
+
+    toast.success(`Product "${name}" added & synced live across portals!`, 'Product Uploaded');
+    setName('');
+    setBaseRate('');
+    setBundlesPerPack(8);
+    setBundlePieces(10);
+    setUnitType('per Bundle');
+    setDescription('');
+    setImageFiles([]);
+    setImagePreviews([]);
+    setUploading(false);
   };
 
   return (
@@ -245,30 +281,153 @@ export default function ProductForm() {
           <h2>
             <i className="fa-solid fa-circle-plus"></i> Add Mat to Catalog
           </h2>
-          <p className="section-desc">Add mat details, upload photo, choose category, rate, and packaging.</p>
+          <p className="section-desc">Upload 2 to 4 photos, set category, packaging, and rate details.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="product-form">
-          {/* Photo Upload Zone */}
+          {/* Multi-Image Upload (2 to 4 Images Required) */}
           <div className="form-group">
-            <label><i className="fa-solid fa-image"></i> Product Image Upload</label>
-            <div className="image-upload-zone">
-              <input type="file" accept="image/*" className="file-input" onChange={handleImageChange} />
-              {!imagePreview ? (
-                <div className="upload-placeholder">
-                  <i className="fa-solid fa-cloud-arrow-up upload-icon"></i>
-                  <p>Click or drag & drop mat photo</p>
-                  <span className="upload-hint">JPG, PNG or WEBP up to 5MB</span>
-                </div>
-              ) : (
-                <div className="image-preview-container">
-                  <img src={imagePreview} alt="Preview" />
-                  <button type="button" className="btn-remove-img" onClick={() => { setImageFile(null); setImagePreview(null); }} title="Remove photo">
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-              )}
+            <div className="label-with-badge" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+              <label style={{ margin: 0 }}>
+                <i className="fa-solid fa-images" style={{ color: 'var(--brand-magenta, #9e2267)', marginRight: '0.35rem' }}></i>
+                Product Photos (2 to 4 Images)
+              </label>
+              <span style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                padding: '0.2rem 0.55rem',
+                borderRadius: '12px',
+                background: imageFiles.length >= 2 ? '#f0fdf4' : '#fef2f2',
+                color: imageFiles.length >= 2 ? '#166534' : '#991b1b',
+                border: `1px solid ${imageFiles.length >= 2 ? '#86efac' : '#fca5a5'}`
+              }}>
+                {imageFiles.length} of 4 Attached {imageFiles.length < 2 && '(Min 2 Required)'}
+              </span>
             </div>
+
+            {/* Thumbnail Preview Grid */}
+            <div className="multi-image-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              {[0, 1, 2, 3].map((slotIdx) => {
+                const preview = imagePreviews[slotIdx];
+                const isPrimary = slotIdx === 0;
+
+                return (
+                  <div
+                    key={slotIdx}
+                    className="image-slot-card"
+                    style={{
+                      position: 'relative',
+                      aspectRatio: '1',
+                      borderRadius: '8px',
+                      border: preview ? '2px solid var(--brand-magenta, #9e2267)' : '2px dashed #cbd5e1',
+                      backgroundColor: preview ? '#000000' : '#f8fafc',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexDirection: 'column'
+                    }}
+                  >
+                    {preview ? (
+                      <>
+                        <img
+                          src={preview}
+                          alt={`Angle ${slotIdx + 1}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage(slotIdx)}
+                          title="Remove this photo"
+                          style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            background: 'rgba(239, 68, 68, 0.9)',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '20px',
+                            height: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '0.7rem',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <i className="fa-solid fa-xmark"></i>
+                        </button>
+                        <span style={{
+                          position: 'absolute',
+                          bottom: '0',
+                          left: '0',
+                          right: '0',
+                          background: 'rgba(0,0,0,0.65)',
+                          color: '#ffffff',
+                          fontSize: '0.62rem',
+                          textAlign: 'center',
+                          padding: '1px 0',
+                          fontWeight: 600
+                        }}>
+                          {isPrimary ? '★ Cover' : `Angle ${slotIdx + 1}`}
+                        </span>
+                      </>
+                    ) : (
+                      <label style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        width: '100%',
+                        height: '100%',
+                        color: '#94a3b8',
+                        padding: '4px',
+                        textAlign: 'center'
+                      }}>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleImagesSelected}
+                          multiple
+                        />
+                        <i className="fa-solid fa-camera" style={{ fontSize: '1.1rem', marginBottom: '0.2rem', color: isPrimary ? 'var(--brand-magenta, #9e2267)' : '#94a3b8' }}></i>
+                        <span style={{ fontSize: '0.65rem', fontWeight: 600 }}>
+                          {isPrimary ? '+ Photo 1*' : slotIdx === 1 ? '+ Photo 2*' : `+ Photo ${slotIdx + 1}`}
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Quick Upload Button Strip */}
+            {imageFiles.length < 4 && (
+              <label className="btn-upload-more" style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                color: 'var(--brand-navy, #15244c)',
+                background: '#e0e7ff',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}>
+                <i className="fa-solid fa-plus"></i> Select More Photos (2 to 4 total)
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImagesSelected}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            )}
           </div>
 
           {/* Product Name */}
@@ -279,12 +438,12 @@ export default function ProductForm() {
               className="form-control"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Heavy Duty Panipat Door Mat"
+              placeholder="e.g. Premium Cotton Handloom Mat"
               required
             />
           </div>
 
-          {/* Category Selector */}
+          {/* Category Selector with Sri Surya Tex Categories */}
           <div className="form-group">
             <label><i className="fa-solid fa-layer-group"></i> Choose Category</label>
             <select
@@ -293,10 +452,6 @@ export default function ProductForm() {
               onChange={(e) => handleCategorySelect(e.target.value)}
               required
             >
-              <option value="Panipat Mat">Panipat Mat</option>
-              <option value="Export Mat">Export Mat</option>
-              <option value="Local Mat">Local Mat</option>
-              <option value="Long Mat">Long Mat</option>
               {customCategories.map((cat, idx) => (
                 <option key={idx} value={cat}>{cat}</option>
               ))}
@@ -335,7 +490,7 @@ export default function ProductForm() {
                 className="form-control"
                 value={baseRate}
                 onChange={(e) => setBaseRate(e.target.value)}
-                placeholder={unitType === 'per Piece' ? 'e.g. 180 (per piece)' : 'e.g. 1800 (per bundle)'}
+                placeholder={unitType === 'per Piece' ? 'e.g. 180' : 'e.g. 1800'}
                 min="1"
                 required
               />
@@ -343,8 +498,8 @@ export default function ProductForm() {
                 {unitType === 'per Piece'
                   ? 'Price for 1 single piece'
                   : baseRate && bundlePieces
-                    ? `Price for 1 full bundle (~ ₹${Math.round(parseFloat(baseRate) / bundlePieces)} / pc)`
-                    : `Price for 1 full ${unitType.replace('per ', '')}`}
+                    ? `Price for 1 bundle (~ ₹${Math.round(parseFloat(baseRate) / bundlePieces)}/pc)`
+                    : `Price for 1 ${unitType.replace('per ', '')}`}
               </small>
             </div>
             <div className="form-group col-6">
@@ -357,12 +512,12 @@ export default function ProductForm() {
                 <option value="per Feet">per Feet</option>
               </select>
               <small style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginTop: '0.2rem' }}>
-                How this mat is sold to customers
+                How this item is sold
               </small>
             </div>
           </div>
 
-          {/* Packaging Configuration: Pieces per Bundle & Bundles / Pieces per Master Bale */}
+          {/* Packaging Configuration: Pieces per Bundle & Bundles per Master Bale */}
           <div className="form-row">
             {(unitType === 'per Bundle' || unitType === 'per Dozen') ? (
               <>
@@ -388,12 +543,12 @@ export default function ProductForm() {
                     className="form-control"
                     value={bundlesPerPack}
                     onChange={(e) => setBundlesPerPack(e.target.value)}
-                    placeholder="e.g. 3 (Robo), 8 (13x19)"
+                    placeholder="e.g. 3, 8, 10"
                     min="1"
                     required
                   />
                   <small style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginTop: '0.2rem' }}>
-                    Bundles per Master Bale
+                    Bundles packed in 1 Bale
                   </small>
                 </div>
               </>
@@ -410,13 +565,13 @@ export default function ProductForm() {
                   required
                 />
                 <small style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginTop: '0.2rem' }}>
-                  Total individual pieces that fit in 1 Master Bale
+                  Total individual pieces fitting in 1 Master Bale
                 </small>
               </div>
             )}
           </div>
 
-          {/* Min Order Notice */}
+          {/* Purchase Notice */}
           <div className="form-group">
             <label><i className="fa-solid fa-cart-flatbed"></i> Customer Purchase Notice</label>
             <input
@@ -424,11 +579,11 @@ export default function ProductForm() {
               className="form-control"
               value={minOrderNotice}
               onChange={(e) => setMinOrderNotice(e.target.value)}
-              placeholder="Notice..."
+              placeholder="e.g. Minimum order 1 bundle (10 pcs)"
             />
           </div>
 
-          {/* Stock Availability Status & Season/Stock Pricing Notice */}
+          {/* Stock Availability */}
           <div className="form-row">
             <div className="form-group col-6">
               <label><i className="fa-solid fa-warehouse"></i> Stock Availability</label>
@@ -454,25 +609,25 @@ export default function ProductForm() {
                 className="form-control"
                 value={seasonNotice}
                 onChange={(e) => setSeasonNotice(e.target.value)}
-                placeholder="Price may differ based on the season item or the stock quantity"
+                placeholder="Price may differ based on the season item"
               />
             </div>
           </div>
 
-          {/* Details */}
+          {/* Description */}
           <div className="form-group">
-            <label><i className="fa-solid fa-align-left"></i> Product Details</label>
+            <label><i className="fa-solid fa-align-left"></i> Product Details & Specifications</label>
             <textarea
               className="form-control"
               rows="3"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Dimensions, materials, color patterns..."
+              placeholder="Dimensions, quality weave, materials, colors..."
             ></textarea>
           </div>
 
           <button type="submit" className="btn-submit-product" disabled={uploading}>
-            <i className="fa-solid fa-plus-circle"></i> {uploading ? 'Processing via Server...' : 'Upload Mat Product'}
+            <i className="fa-solid fa-plus-circle"></i> {uploading ? 'Processing & Uploading Photos...' : 'Upload Mat Product (2-4 Photos)'}
           </button>
         </form>
       </section>

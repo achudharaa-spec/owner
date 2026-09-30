@@ -326,7 +326,7 @@ export function printBaleSlips(order) {
       <body>
         <div class="no-print-bar">
           <div>
-            <strong>Govindasamy & Co Dispatch Manager</strong> • ${totalBales} Master Bale Slip(s) Ready
+            <strong>SRI SURYA TEX Dispatch Manager</strong> • ${totalBales} Master Bale Slip(s) Ready
           </div>
           <button class="btn-print" onclick="window.print()">🖨️ Print Dispatch Slips</button>
         </div>
@@ -334,9 +334,12 @@ export function printBaleSlips(order) {
         ${bales.map((bale, idx) => `
           <div class="bale-slip">
             <div class="header-row">
-              <div>
-                <div class="company-brand">Govindasamy & Co</div>
-                <div class="company-subtitle">Wholesale Polypropylene & Cotton Mat Manufacturers • Dispatch Label</div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <img src="/assets/logo.png" onerror="this.src='/assets/logo.jpg'" style="width: 50px; height: 50px; object-fit: contain;" alt="Logo" />
+                <div>
+                  <div class="company-brand">SRI SURYA TEX</div>
+                  <div class="company-subtitle">Handloom, Rubber & Fancy Mats • Bed Spreads • ERODE - 638 001 • Cell: 98426 86264</div>
+                </div>
               </div>
               <div class="bale-badge">
                 <div class="bale-badge-num">BALE ${idx + 1} / ${totalBales}</div>

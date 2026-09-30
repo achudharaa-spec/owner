@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isStoreAdmin() {
+      return request.auth != null && (
+        request.auth.token.admin == true || 
+        request.auth.token.email.matches('(?i)^achudharaa@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^govindasamy\\.(textitle|textile)@gmail\\.com$')
+      );
+    }
+
+    // Mat Products Collection: Public Read-Only for customer site; Admin required for writes
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isStoreAdmin();
+    }
+
+    // Categories Collection: Public Read, Admin Write
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isStoreAdmin();
+    }
+
+    // Store Settings (Price visibility toggle, common bale rate): Public Read, Admin Write
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isStoreAdmin();
+    }
+
+    // Customer Wholesale Orders: Validated Public Create; Admin Read/Update/Delete
+    match /orders/{orderId} {
+      allow create: if request.resource.data.keys().hasAll(['companyName', 'contactPerson', 'phone', 'items', 'status', 'createdAt'])
+                    && request.resource.data.companyName is string && request.resource.data.companyName.size() >= 2 && request.resource.data.companyName.size() <= 200
+                    && request.resource.data.contactPerson is string && request.resource.data.contactPerson.size() >= 2 && request.resource.data.contactPerson.size() <= 100
+                    && request.resource.data.phone is string && request.resource.data.phone.size() >= 10 && request.resource.data.phone.size() <= 20
+                    && (
+                      (request.resource.data.keys().hasAny(['deliveryAddress']) && request.resource.data.deliveryAddress is string && request.resource.data.deliveryAddress.size() >= 5) ||
+                      (request.resource.data.keys().hasAny(['address']) && request.resource.data.address is string && request.resource.data.address.size() >= 5)
+                    )
+                    && request.resource.data.items is list && request.resource.data.items.size() >= 1 && request.resource.data.items.size() <= 100
+                    && (request.resource.data.status == 'PENDING' || request.resource.data.status == 'PENDING_CONFIRMATION');
+      allow read, update, delete: if isStoreAdmin();
+    }
+
+    // Security Audit Logs: Strict Admin-Only Read; Cloud Functions / Admin Write
+    match /audit_logs/{logId} {
+      allow read: if isStoreAdmin();
+      allow write: if isStoreAdmin();
+    }
+
+    // Master Bales Packing Breakdown: Public Create for order placement; Admin Read/Update
+    match /master_bales/{orderId} {
+      allow read: if true;
+      allow write: if isStoreAdmin();
+      allow create: if request.resource.data.keys().hasAll(['orderId', 'bales', 'totalBales'])
+                    && request.resource.data.bales is list;
+    }
+  }
+}

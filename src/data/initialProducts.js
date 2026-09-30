@@ -1,0 +1,100 @@
+export const INITIAL_PRODUCTS = [
+  {
+    id: "prod_handloom_01",
+    title: "Premium Cotton Striped Handloom Door Mat",
+    category: "Handloom Mats",
+    baseRate: 480,
+    unit: "per Bundle",
+    bundlePieces: 10,
+    bundlesPerPack: 8,
+    compressibility: 0.8,
+    inStock: true,
+    stockStatus: "IN_STOCK",
+    stockQty: 100,
+    minOrderNotice: "Purchased per full Bundle (10 Pcs only)",
+    seasonNotice: "Price may differ based on the season item or the stock quantity",
+    description: "High-density 100% woven cotton handloom mat with reinforced selvedge border. Ideal for high-traffic doorways and interior entryways.",
+    imageUrl: "/assets/logo.png",
+    images: [
+      "/assets/logo.png",
+      "/assets/logo.jpg",
+      "/assets/logo.png",
+      "/assets/logo.jpg"
+    ],
+    isDisabled: false,
+    createdAt: "2026-09-30T17:00:00.000Z"
+  },
+  {
+    id: "prod_rubber_02",
+    title: "Heavy Duty Anti-Skid Ribbed Rubber Mat",
+    category: "Rubber Mats",
+    baseRate: 720,
+    unit: "per Bundle",
+    bundlePieces: 10,
+    bundlesPerPack: 6,
+    compressibility: 0.8,
+    inStock: true,
+    stockStatus: "IN_STOCK",
+    stockQty: 100,
+    minOrderNotice: "Purchased per full Bundle (10 Pcs only)",
+    seasonNotice: "Price may differ based on the season item or the stock quantity",
+    description: "Heavy duty vulcanized rubber backing with textured ridges for all-weather wet soil and mud trapping. Durable commercial grade.",
+    imageUrl: "/assets/logo.jpg",
+    images: [
+      "/assets/logo.jpg",
+      "/assets/logo.png",
+      "/assets/logo.jpg"
+    ],
+    isDisabled: false,
+    createdAt: "2026-09-30T17:05:00.000Z"
+  },
+  {
+    id: "prod_fancy_03",
+    title: "Deluxe Jacquard Velvet Fancy Living Room Mat",
+    category: "Fancy Mats",
+    baseRate: 950,
+    unit: "per Bundle",
+    bundlePieces: 10,
+    bundlesPerPack: 5,
+    compressibility: 0.8,
+    inStock: true,
+    stockStatus: "IN_STOCK",
+    stockQty: 100,
+    minOrderNotice: "Purchased per full Bundle (10 Pcs only)",
+    seasonNotice: "Price may differ based on the season item or the stock quantity",
+    description: "Microfiber cut-pile embossed jacquard floral patterns with ultra-absorbent foam core and gold accent borders.",
+    imageUrl: "/assets/logo.png",
+    images: [
+      "/assets/logo.png",
+      "/assets/logo.jpg",
+      "/assets/logo.png",
+      "/assets/logo.jpg"
+    ],
+    isDisabled: false,
+    createdAt: "2026-09-30T17:10:00.000Z"
+  },
+  {
+    id: "prod_bedspread_04",
+    title: "Traditional Erode Fast-Color Cotton Double Bed Spread",
+    category: "Bed Spreads",
+    baseRate: 1350,
+    unit: "per Bundle",
+    bundlePieces: 10,
+    bundlesPerPack: 4,
+    compressibility: 0.8,
+    inStock: true,
+    stockStatus: "IN_STOCK",
+    stockQty: 100,
+    minOrderNotice: "Purchased per full Bundle (10 Pcs only)",
+    seasonNotice: "Price may differ based on the season item or the stock quantity",
+    description: "Traditional yarn-dyed double jacquard woven bedspread manufactured in Erode textile hub. Colorfast and machine-washable.",
+    imageUrl: "/assets/logo.jpg",
+    images: [
+      "/assets/logo.jpg",
+      "/assets/logo.png",
+      "/assets/logo.jpg"
+    ],
+    isDisabled: false,
+    createdAt: "2026-09-30T17:15:00.000Z"
+  }
+];

@@ -6,7 +6,9 @@ export default function Header({
   onOpenBaleInfo,
   activeView = 'CATALOG',
   onNavigateView,
-  pendingOrdersCount = 0
+  pendingOrdersCount = 0,
+  hidePrices = true,
+  onToggleHidePrices
 }) {
   return (
     <header className="top-nav">
@@ -14,15 +16,15 @@ export default function Header({
         <div className="brand-group">
           <div className="logo-wrapper">
             <img
-              src="/assets/logo.jpg"
-              alt="Govindasamy & Co Logo"
+              src="/assets/logo.png"
+              alt="Sri Surya Tex Logo"
               className="brand-logo"
-              onError={(e) => { e.target.src = 'https://via.placeholder.com/48?text=GS'; }}
+              onError={(e) => { e.target.src = '/assets/logo.jpg'; }}
             />
           </div>
           <div className="brand-titles">
-            <h1>GOVINDASAMY & CO</h1>
-            <span className="brand-tagline">Quality Mat & Textile Products Manufacturer & Wholesaler • Admin Portal</span>
+            <h1>SRI SURYA TEX</h1>
+            <span className="brand-tagline">Quality Handloom, Rubber & Fancy Mats &bull; Admin Portal</span>
           </div>
         </div>
 
@@ -51,13 +53,31 @@ export default function Header({
             )}
           </button>
 
+          {/* Admin Customer Price Visibility Control */}
+          <button
+            type="button"
+            className="admin-status-pill btn-price-toggle-nav"
+            onClick={onToggleHidePrices}
+            title={hidePrices ? "Customer Prices are currently HIDDEN. Click to SHOW amounts." : "Customer Prices are currently VISIBLE. Click to HIDE amounts."}
+            style={{
+              background: hidePrices ? '#fff1f2' : '#f0fdf4',
+              borderColor: hidePrices ? '#fecdd3' : '#bbf7d0',
+              color: hidePrices ? '#be123c' : '#15803d',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            <i className={`fa-solid ${hidePrices ? 'fa-eye-slash' : 'fa-eye'}`} style={{ marginRight: '0.35rem' }}></i>
+            <span>User Prices: {hidePrices ? 'HIDDEN' : 'VISIBLE'}</span>
+          </button>
+
           <button
             type="button"
             className="admin-status-pill btn-bale-info-nav"
             onClick={onOpenBaleInfo}
             title="Click to view & edit Common Master Bale Rate"
           >
-            <i className="fa-solid fa-cube" style={{ color: '#0284c7' }}></i>
+            <i className="fa-solid fa-cube" style={{ color: 'var(--brand-gold, #c89a4b)' }}></i>
             <span>Bale Info</span>
           </button>
 

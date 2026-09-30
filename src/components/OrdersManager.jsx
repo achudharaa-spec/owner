@@ -419,7 +419,7 @@ export default function OrdersManager({ onBackToCatalog }) {
                   <div className="order-action-buttons">
                     {cleanPhone && (
                       <a
-                        href={`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Hello ${ord.contactPerson || 'Customer'}, regarding your wholesale order (${ord.companyName || ''}) with Govindasamy & Co...`)}`}
+                        href={`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Hello ${ord.contactPerson || 'Customer'}, regarding your wholesale order (${ord.companyName || ''}) with SRI SURYA TEX...`)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn-order-action btn-whatsapp"
