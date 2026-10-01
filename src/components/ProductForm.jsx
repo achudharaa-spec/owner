@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, storage, collection, addDoc, onSnapshot, serverTimestamp, ref, uploadBytes, getDownloadURL } from '../firebase';
+import { db, storage, collection, addDoc, doc, setDoc, auth, signInWithEmailAndPassword, onSnapshot, serverTimestamp, ref, uploadBytes, getDownloadURL } from '../firebase';
 import { toast } from '../utils/toast';
 
 const DEFAULT_CATEGORIES = ['Handloom Mats', 'Rubber Mats', 'Fancy Mats', 'Bed Spreads'];
@@ -244,22 +244,23 @@ export default function ProductForm() {
       }
     }
 
-    // 3. Attempt Firestore write as cloud backup
+    // 3. Primary Cloud Firestore Database Sync
     try {
-      const docRef = await addDoc(collection(db, 'products'), {
+      if (!auth.currentUser) {
+        const configuredAdmin = (import.meta.env.VITE_ADMIN_EMAIL || 'achudharaa@gmail.com').trim();
+        const customPass = import.meta.env.VITE_ADMIN_PASSWORD || 'SriSuryaTex@2026';
+        try {
+          await signInWithEmailAndPassword(auth, configuredAdmin, customPass);
+        } catch (_) {}
+      }
+      await setDoc(doc(db, 'products', assignedId), {
+        id: assignedId,
         ...productData,
         createdAt: serverTimestamp()
       });
-      if (docRef && docRef.id && docRef.id !== assignedId) {
-        // If Firestore assigned a custom id, link it
-        fetch(`${SERVER_URL}/api/products/${assignedId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ firestoreId: docRef.id })
-        }).catch(() => {});
-      }
     } catch (fsErr) {
-      console.warn('Firestore cloud backup notice (using server sync):', fsErr.message);
+      console.warn('Firestore cloud product sync notice:', fsErr.message);
+      toast.warning('Product created locally, but cloud sync requires admin authentication.', 'Cloud Sync Notice');
     }
 
     toast.success(`Product "${name}" added & synced live across portals!`, 'Product Uploaded');

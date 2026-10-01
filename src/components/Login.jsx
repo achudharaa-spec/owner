@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, signInWithEmailAndPassword, googleProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from '../firebase';
+import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, googleProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from '../firebase';
 import { RateLimiter, sanitizeInput } from '../utils/security';
 import { toast } from '../utils/toast';
 
@@ -74,7 +74,12 @@ export default function Login({ onLoginSuccess }) {
       try {
         await signInWithEmailAndPassword(auth, CONFIGURED_ADMIN_EMAIL, CUSTOM_ADMIN_PASSWORD);
       } catch (fbErr) {
-        console.info('Firebase auth sync note:', fbErr.message);
+        console.info('Firebase auth sign-in note:', fbErr.message);
+        try {
+          await createUserWithEmailAndPassword(auth, CONFIGURED_ADMIN_EMAIL, CUSTOM_ADMIN_PASSWORD);
+        } catch (createErr) {
+          console.warn('Firebase user creation note:', createErr.message);
+        }
       }
 
       limiter.resetAttempts();

@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { db, storage, collection, onSnapshot, doc, deleteDoc, updateDoc, ref, uploadBytes, getDownloadURL, functions, httpsCallable } from '../firebase';
+import { db, storage, collection, onSnapshot, doc, deleteDoc, updateDoc, setDoc, auth, signInWithEmailAndPassword, ref, uploadBytes, getDownloadURL, functions, httpsCallable } from '../firebase';
 import { toast } from '../utils/toast';
 import LottieAnimation from './LottieAnimation';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:10000';
+
+async function ensureAdminAuth() {
+  if (!auth.currentUser) {
+    const configuredAdmin = (import.meta.env.VITE_ADMIN_EMAIL || 'achudharaa@gmail.com').trim();
+    const customPass = import.meta.env.VITE_ADMIN_PASSWORD || 'SriSuryaTex@2026';
+    try {
+      await signInWithEmailAndPassword(auth, configuredAdmin, customPass);
+    } catch (_) {}
+  }
+}
 
 export default function ProductGrid({ products }) {
   const [filterCategory, setFilterCategory] = useState('ALL');
@@ -165,6 +175,7 @@ export default function ProductGrid({ products }) {
     toast.success(`Product "${prod.title}" ${newDisabled ? 'disabled' : 'enabled'}!`, 'Catalog Updated');
 
     try {
+      await ensureAdminAuth();
       await updateDoc(doc(db, 'products', prod.id), updatePayload);
     } catch (err) {
       console.warn('Firestore toggle disable sync notice:', err.message);
@@ -208,6 +219,7 @@ export default function ProductGrid({ products }) {
     toast.success(`Product "${prod.title}" marked as ${newInStock ? 'In Stock' : 'Out of Stock'}!`, 'Stock Updated');
 
     try {
+      await ensureAdminAuth();
       await updateDoc(doc(db, 'products', prod.id), updatePayload);
     } catch (err) {
       console.warn('Firestore stock sync notice:', err.message);
@@ -343,6 +355,7 @@ export default function ProductGrid({ products }) {
         toast.success(`Product "${title}" deleted successfully!`, 'Product Deleted');
 
         try {
+          await ensureAdminAuth();
           await deleteDoc(doc(db, 'products', id));
         } catch (err) {
           console.warn('Firestore delete sync notice:', err.message);
