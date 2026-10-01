@@ -10,7 +10,6 @@ import AuditLogs from './components/AuditLogs';
 import ModernToastContainer from './components/ModernToastContainer';
 import LottieAnimation from './components/LottieAnimation';
 import { toast } from './utils/toast';
-import { INITIAL_PRODUCTS } from './data/initialProducts';
 import './styles.css';
 
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minutes Inactivity Timeout
@@ -26,7 +25,7 @@ export default function App() {
       const cached = JSON.parse(localStorage.getItem('gsco_catalog_products') || '[]');
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (_) {}
-    return INITIAL_PRODUCTS;
+    return [];
   });
   const [isBaleInfoModalOpen, setIsBaleInfoModalOpen] = useState(false);
   const [activeView, setActiveView] = useState('CATALOG'); // 'CATALOG' | 'ORDERS'
